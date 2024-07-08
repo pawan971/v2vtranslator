@@ -3,11 +3,13 @@ import whisper
 from translate import Translator
 from TTS.api import TTS
 import uuid
+import os
 from pathlib import Path
 
 
 model = whisper.load_model("base")
 tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+os.environ["COQUI_TOS_AGREED"] = "1"
 
 def v2vtranslate(audiofile):
 
