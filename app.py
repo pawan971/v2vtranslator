@@ -6,10 +6,11 @@ import uuid
 import os
 from pathlib import Path
 
+os.environ["COQUI_TOS_AGREED"] = "1"
 
 model = whisper.load_model("base")
 tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
-os.environ["COQUI_TOS_AGREED"] = "1"
+
 
 def v2vtranslate(audiofile):
 
