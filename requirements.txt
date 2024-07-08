@@ -1,0 +1,4 @@
+gradio
+translate
+TTS 
+openai-whisper
