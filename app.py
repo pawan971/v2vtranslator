@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 model = whisper.load_model("base")
-tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2", gpu=True)
+tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
 
 def v2vtranslate(audiofile):
 
