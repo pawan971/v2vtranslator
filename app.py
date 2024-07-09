@@ -5,46 +5,20 @@ from TTS.api import TTS
 import uuid
 import os
 from pathlib import Path
+import gc
+import torch
 
 os.environ["COQUI_TOS_AGREED"] = "1"
 
 model = whisper.load_model("base")
 tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
 
-
-def v2vtranslate(audiofile):
-
-    print("Starting transcription...")
-    transcription_result = transcribeaudio(audiofile)
-
-    if transcription_result.status == model.transcribe.error:
-      raise gr.Error(transcription_result.error)
-    else:
-      text = transcription_result.text
-      print(f"Transcribed Text: {text}")
-
-    print("Starting translation...")
-    es_translation,fr_translation,hi_translation,ja_translation = translatetext(text)
-    print(f"Translations:\nSpanish: {es_translation}\nFrench: {fr_translation}\nHindi: {hi_translation}\nJapanese: {ja_translation}")
-
-    print("Generating TTS audio files(Outside Function)...")
-    es_translation_path = readtranslation(es_translation,audiofile)
-    fr_translation_path = readtranslation(fr_translation,audiofile)
-    hi_translation_path = readtranslation(hi_translation,audiofile)
-    ja_translation_path = readtranslation(ja_translation,audiofile)
-    print(f"Generated audio paths:\nSpanish: {es_translation_path}\nFrench: {fr_translation_path}\nHindi: {hi_translation_path}\nJapanese: {ja_translation_path}")
-
-
-
-    es_path = Path(es_translation_path)
-    fr_path = Path(fr_translation_path)
-    hi_path = Path(hi_translation_path)
-    ja_path = Path(ja_translation_path)
+output_dir = "/content/output_audio"
+os.makedirs(output_dir, exist_ok=True)
 
 
 
 def transcribeaudio(audiofile):
-
     print("Transcribing audio...")
     tresult = model.transcribe(audiofile)
 
@@ -57,49 +31,107 @@ def transcribeaudio(audiofile):
     mel = whisper.log_mel_spectrogram(audio).to(model.device)
 
     _, probs = model.detect_language(mel)
-    print(f"Detected language: {max(probs, key=probs.get)}")
+    detected_language = max(probs, key=probs.get)
+    print(f"Detected language: {detected_language}")
 
-    return tresult
+    return {"text": tresult["text"], "language": detected_language}
 
-def translatetext(text):
+def translatetext(text, source_lang):
+    translations = {}
+    languages = {"es": "Spanish", "fr": "French", "hi": "Hindi"}
+    
+    for lang_code, lang_name in languages.items():
+        try:
+            translator = Translator(from_lang=source_lang, to_lang=lang_code)
+            translated_text = translator.translate(text)
+            translations[lang_code] = translated_text
+            print(f"{lang_name} Translation: {translated_text}")
+        except Exception as e:
+            print(f"Error translating to {lang_name}: {str(e)}")
+            translations[lang_code] = f"Error: Could not translate to {lang_name}"
+    
+    return [translations[lang] for lang in ["es", "fr", "hi"]]
 
-    translator_spanish = Translator(from_lang="en",to_lang="es")
-    es_text = translator_spanish.translate(text)
-
-    translator_french = Translator(from_lang="en",to_lang="fr")
-    fr_text = translator_french.translate(text)
-
-    translator_hindi = Translator(from_lang="en",to_lang="hi")
-    hi_text = translator_hindi.translate(text)
-
-    translator_japanese = Translator(from_lang="en",to_lang="ja")
-    ja_text = translator_japanese.translate(text)
-    print(f"Japanese Translation(Inside Function): {ja_text}")
-
-    return es_text,fr_text,hi_text,ja_text
-
-
-def readtranslation(text,audiofile):
-
-    print(f"Generating TTS for text(Inside Function): {text}")
-    output_path = f"{uuid.uuid4()}.wav"
+def readtranslation(text, audiofile, language):
+    output_path = os.path.join(output_dir, f"{language}_{uuid.uuid4()}.wav")
+    print(f"Generating TTS for text: {text}")
     tts.tts_to_file(text=text,
-                file_path=output_path,
-                speaker_wav=audiofile,
-                language="en")
+                    file_path=output_path,
+                    speaker_wav=audiofile,
+                    language=language)
     print(f"Generated audio file at: {output_path}")
     return output_path
 
+def voice_to_voice(audiofile, progress=gr.Progress()):
+    progress(0, desc="Starting process...")
+    try:
+        progress(0.2, desc="Transcribing audio...")
+        transcription_result = transcribeaudio(audiofile)
+        
+        if isinstance(transcription_result, dict) and transcription_result.get("status") == "error":
+            raise gr.Error(transcription_result["error"])
+        
+        text = transcription_result["text"]
+        detected_language = transcription_result["language"]
+        
+        progress(0.4, desc="Translating text...")
+        translations = translatetext(text, detected_language)
+        
+        audio_paths = []
+        languages = ["es", "fr", "hi"]
+        for i, (lang, translation) in enumerate(zip(languages, translations)):
+            progress((i + 1) * 0.1 + 0.5, desc=f"Generating {lang} audio...")
+            try:
+                audio_path = readtranslation(translation, audiofile, lang)
+                audio_paths.append(audio_path)
+            except Exception as e:
+                print(f"Error generating audio for {lang}: {str(e)}")
+                audio_paths.append(None)
+        
+        progress(1.0, desc="Process complete!")
+        return audio_paths + translations
+    except Exception as e:
+        raise gr.Error(f"An error occurred: {str(e)}")
+    finally:
+        cleanup_memory()
 
-audio_input = gr.Audio(
-    sources=['microphone'],
-    type="filepath"
-    )
-demo = gr.Interface(
-    fn=v2vtranslate,
-    inputs=audio_input,
-    outputs=[gr.Audio(label="Spanish"),gr.Audio(label="French"),gr.Audio(label="Hindi"),gr.Audio(label="Japanese")]
-)
+with gr.Blocks() as demo:
+    gr.Markdown("## Record yourself in any language and immediately receive voice translations.")
+    with gr.Row():
+        with gr.Column():
+            audio_input = gr.Audio(sources=["microphone"],
+                                   type="filepath",
+                                   show_download_button=True,
+                                   waveform_options=gr.WaveformOptions(
+                                       waveform_color="#01C6FF",
+                                       waveform_progress_color="#0066B4",
+                                       skip_length=2,
+                                       show_controls=False,
+                                   ))
+            with gr.Row():
+                submit = gr.Button("Submit", variant="primary")
+                btn = gr.ClearButton(audio_input, "Clear")
+
+    with gr.Row():
+        with gr.Group():
+            es_output = gr.Audio(label="Spanish", interactive=False)
+            es_text = gr.Markdown()
+        with gr.Group():
+            fr_output = gr.Audio(label="French", interactive=False)
+            fr_text = gr.Markdown()
+        with gr.Group():
+            hi_output = gr.Audio(label="Hindi", interactive=False)
+            hi_text = gr.Markdown()
+
+    output_components = [es_output, fr_output, hi_output,
+                         es_text, fr_text, hi_text]
+    submit.click(fn=voice_to_voice, inputs=audio_input, outputs=output_components, show_progress=True)
+
+def cleanup_memory():
+    gc.collect()
+    torch.cuda.empty_cache()
+    print("Memory cleaned up")
 
 if __name__ == "__main__":
     demo.launch()
+    cleanup_memory()
