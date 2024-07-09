@@ -13,7 +13,7 @@ os.environ["COQUI_TOS_AGREED"] = "1"
 model = whisper.load_model("base")
 tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
 
-output_dir = "/content/output_audio"
+output_dir = "output_audio"
 os.makedirs(output_dir, exist_ok=True)
 
 
